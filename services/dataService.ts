@@ -1,393 +1,457 @@
-import { DriverData, QueueStatus, Gate, Priority, EntryType, UserProfile, ActivityLog, GateConfig, DivisionConfig } from '../types';
+import { ActivityLog, DivisionConfig, DriverData, EntryType, Gate, GateConfig, Priority, QueueStatus, SlotInfo, UserProfile } from '../types';
 
-// --- CONFIGURATION ---
-const WA_GROUP_ID = '120363423657558569@g.us'; 
+// --- LOCAL STORAGE KEYS ---
+const DB_KEY_DRIVERS = 'yms_drivers_v1';
+const DB_KEY_GATES = 'yms_gates_v1';
+const DB_KEY_USERS = 'yms_users_v1';
+const DB_KEY_DIVISIONS = 'yms_divisions_v1';
+const DB_KEY_LOGS = 'yms_logs_v1';
+const DB_KEY_CONFIG = 'yms_dev_config';
+const DB_KEY_WA_GROUP = 'wa_group_id';
 
-// --- API CLIENT (GENERIC) ---
-const apiRequest = async <T>(table: string, action: 'GET' | 'CREATE' | 'UPDATE' | 'DELETE', data?: any): Promise<T> => {
-  try {
-    const response = await fetch('/api/drivers', { 
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action, table, data }),
-    });
-
-    if (!response.ok) {
-      const errText = await response.text();
-      throw new Error(`API Error (${table}): ${response.status} - ${errText}`);
+// --- INITIAL DATA SEEDING (Agar tidak kosong saat pertama buka) ---
+const seedLocalData = () => {
+    if (!localStorage.getItem(DB_KEY_GATES)) {
+        const defaultGates: GateConfig[] = [
+            { id: 'GATE_1', name: 'GATE 1 (Utama)', capacity: 5, status: 'OPEN', type: 'GENERAL' },
+            { id: 'DOCK_1', name: 'Loading Dock A', capacity: 1, status: 'OPEN', type: 'DOCK' },
+            { id: 'DOCK_2', name: 'Loading Dock B', capacity: 1, status: 'OPEN', type: 'DOCK' },
+        ];
+        localStorage.setItem(DB_KEY_GATES, JSON.stringify(defaultGates));
     }
 
-    return await response.json();
-  } catch (error) {
-    console.error(`Failed to execute ${action} on ${table}:`, error);
-    throw error;
-  }
-};
-
-// --- LOGGING SERVICE (DB) ---
-export const logActivity = async (action: string, details: string, user: string = 'System') => {
-  apiRequest('logs', 'CREATE', {
-    userEmail: user, 
-    action,
-    details
-  }).catch(e => console.warn("Logging failed:", e));
-};
-
-// --- WHATSAPP SERVICE ---
-const sendWhatsApp = async (target: string, message: string) => {
-  if (!target || target.length < 5) return;
-
-  try {
-    const response = await fetch('/api/whatsapp', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ target, message })
-    });
-    const result = await response.json();
-    if (!result.status) console.warn('WA API Warning:', result.reason);
-  } catch (err) {
-    console.error('WA Failed:', err);
-  }
-};
-
-// --- AUTHENTICATION & USERS (DB BASED) ---
-
-export const verifyDivisionCredential = async (id: string, password: string): Promise<DivisionConfig | null> => {
-    const divisions = await apiRequest<DivisionConfig[]>('divisions', 'GET');
-    const target = divisions.find(d => d.id.toUpperCase() === id.toUpperCase());
-    return (target && target.password === password) ? target : null;
-};
-
-export const loginSystem = async (id: string, password?: string): Promise<UserProfile> => {
-    const users = await apiRequest<UserProfile[]>('users', 'GET');
-    const targetUser = users.find(u => u.id.toLowerCase() === id.toLowerCase());
-
-    if (!targetUser) throw new Error("Username tidak ditemukan.");
-
-    if (password && targetUser.pin_code && password !== targetUser.pin_code) {
-         if (password !== 'demo123' && password !== targetUser.pin_code) { 
-             throw new Error("Password salah.");
-         }
+    if (!localStorage.getItem(DB_KEY_USERS)) {
+        const defaultUsers: UserProfile[] = [
+            { id: 'security', name: 'Pak Satpam', role: 'SECURITY', pin_code: '1234', status: 'ACTIVE' },
+            { id: 'admin', name: 'Admin Ops', role: 'ADMIN', pin_code: '1234', status: 'ACTIVE' },
+            { id: 'manager', name: 'Manager Logistik', role: 'MANAGER', pin_code: '1234', status: 'ACTIVE' }
+        ];
+        localStorage.setItem(DB_KEY_USERS, JSON.stringify(defaultUsers));
     }
 
-    if (targetUser.status !== 'ACTIVE') throw new Error("Akun dinonaktifkan.");
-    
-    logActivity('LOGIN_SUCCESS', `User ${targetUser.name} logged in`, targetUser.name);
-    return targetUser;
+    if (!localStorage.getItem(DB_KEY_DIVISIONS)) {
+        const defaultDivs: DivisionConfig[] = [
+            { id: 'SECURITY', name: 'Pos Security', password: '123', role: 'SECURITY', theme: 'emerald' },
+            { id: 'ADMIN', name: 'Traffic Control', password: '123', role: 'ADMIN', theme: 'blue' },
+            { id: 'MANAGER', name: 'System Admin', password: '123', role: 'MANAGER', theme: 'purple' }
+        ];
+        localStorage.setItem(DB_KEY_DIVISIONS, JSON.stringify(defaultDivs));
+    }
 };
 
-// --- DRIVER TRANSACTIONS (DB) ---
+// Jalankan Seeding
+seedLocalData();
+
+// --- HELPER: SIMULATE ASYNC DELAY ---
+const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+// --- HELPER: LOCAL STORAGE WRAPPER ---
+const getStorage = <T>(key: string, defaultVal: T): T => {
+    const item = localStorage.getItem(key);
+    return item ? JSON.parse(item) : defaultVal;
+};
+
+const setStorage = (key: string, val: any) => {
+    localStorage.setItem(key, JSON.stringify(val));
+};
+
+// --- WHATSAPP MOCK (Agar tidak error 404 ke API) ---
+export const getWAGroupID = (): string => {
+    return localStorage.getItem(DB_KEY_WA_GROUP) || '120363423657558569@g.us';
+};
+
+export const saveWAGroupID = (id: string) => {
+    localStorage.setItem(DB_KEY_WA_GROUP, id);
+};
+
+const formatPhone = (phone: string): string => {
+    return phone.replace(/\D/g, '').replace(/^0/, '62');
+};
+
+const formatWADate = (timestamp: number) => new Date(timestamp).toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' });
+const formatWATime = (timestamp: number) => new Date(timestamp).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' });
+
+const sendWANotification = async (target: string, message: string) => {
+    // MOCK: Hanya log ke console karena API tidak ada di local
+    console.log(`%c[MOCK WA SENT] To: ${target}`, 'color: #25D366; font-weight: bold;');
+    console.log(message);
+    // Kita return success fake
+    return true;
+};
+
+// --- DRIVER SERVICES (LOCAL STORAGE) ---
 
 export const getDrivers = async (): Promise<DriverData[]> => {
-  return await apiRequest<DriverData[]>('drivers', 'GET');
+    await delay(200); // Simulasi loading sedikit agar UI tidak kedip terlalu cepat
+    return getStorage<DriverData[]>(DB_KEY_DRIVERS, []);
 };
 
-export const getDriverById = async (id: string): Promise<DriverData | undefined> => {
-  const drivers = await getDrivers();
-  return drivers.find(d => d.id === id);
+export const getDriverById = async (id: string): Promise<DriverData | null> => {
+    await delay(100);
+    const drivers = getStorage<DriverData[]>(DB_KEY_DRIVERS, []);
+    return drivers.find(d => d.id === id) || null;
 };
 
-// --- UTILS: IMAGE COMPRESSION ---
-const compressImage = (file: File): Promise<string> => {
-    return new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.readAsDataURL(file);
-        reader.onload = (event) => {
-            const img = new Image();
-            img.src = event.target?.result as string;
-            img.onload = () => {
-                const canvas = document.createElement('canvas');
-                const MAX_WIDTH = 800;
-                const scaleSize = MAX_WIDTH / img.width;
-                if (scaleSize >= 1) {
-                    canvas.width = img.width;
-                    canvas.height = img.height;
-                } else {
-                    canvas.width = MAX_WIDTH;
-                    canvas.height = img.height * scaleSize;
-                }
-                const ctx = canvas.getContext('2d');
-                if (!ctx) {
-                    resolve(event.target?.result as string);
-                    return;
-                }
-                ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-                const dataUrl = canvas.toDataURL('image/jpeg', 0.7);
-                resolve(dataUrl);
-            };
-            img.onerror = () => resolve(event.target?.result as string);
-        };
-        reader.onerror = (error) => reject(error);
-    });
-};
+export const createCheckIn = async (data: Partial<DriverData>, docFile?: string): Promise<DriverData> => {
+    await delay(500);
+    const drivers = getStorage<DriverData[]>(DB_KEY_DRIVERS, []);
 
-export const createCheckIn = async (data: Partial<DriverData>, fileToUpload?: File | null): Promise<DriverData> => {
-  const dateStr = new Date().toISOString().slice(0,10).replace(/-/g,'');
-  const randomSuffix = Math.floor(Math.random() * 1000).toString().padStart(3, '0');
-  const newId = `WH-${dateStr}-${randomSuffix}`;
-  
-  let documentBase64 = '';
-  if (fileToUpload) {
-      try {
-          documentBase64 = await compressImage(fileToUpload);
-      } catch (e) {
-          documentBase64 = await new Promise((resolve) => {
-            const reader = new FileReader();
-            reader.onloadend = () => resolve(reader.result as string);
-            reader.readAsDataURL(fileToUpload);
-        });
-      }
-  }
+    // Generate ID Unik
+    const newId = `DRV-${Date.now()}-${Math.floor(Math.random()*1000)}`;
+    const bookingCode = `SOC-${Math.floor(Math.random()*10000).toString().padStart(4,'0')}`;
 
-  const payload = {
-    ...data,
-    id: newId,
-    checkInTime: Date.now(),
-    status: data.entryType === EntryType.BOOKING ? QueueStatus.BOOKED : QueueStatus.CHECKED_IN,
-    gate: Gate.NONE,
-    priority: data.priority || Priority.NORMAL,
-    entryType: data.entryType || EntryType.WALK_IN,
-    documentFile: documentBase64 
-  };
-
-  const response = await apiRequest<{success: boolean, fileUrl: string}>('drivers', 'CREATE', payload);
-  
-  // --- TEMPLATE #1: KONFIRMASI BOOKING ---
-  if (payload.phone) {
-    const msg = `KONFIRMASI BOOKING BERHASIL ✅\n` +
-                `Halo ${payload.name},\n` +
-                `Booking Anda telah terdaftar dengan data:\n` +
-                `📋 Detail Booking:\n` +
-                `Tanggal: ${new Date().toLocaleDateString('id-ID')}\n` +
-                `Jam: ${new Date().toLocaleTimeString('id-ID')}\n` +
-                `No. Polisi: ${payload.licensePlate}\n` +
-                `Perusahaan: ${payload.company}\n` +
-                `Jenis Muatan: ${payload.purpose}\n` +
-                `⚠️ Harap diingat:\n` +
-                `Datang 15 menit lebih awal\n` +
-                `Scan QR di pos security saat tiba\n` +
-                `Siapkan surat jalan & dokumen\n` +
-                `Terima kasih! 🚚\n` +
-                `Sociolla Warehouse Management`;
-    sendWhatsApp(payload.phone, msg);
-  }
-
-  return { ...payload, documentFile: response.fileUrl || '' } as DriverData;
-};
-
-export const verifyDriver = async (id: string, securityName: string, assignedGate: Gate, notes?: string): Promise<boolean> => {
-    const drivers = await getDrivers();
-    const driver = drivers.find(d => d.id === id);
-    if (!driver) return false;
-    
-    const prefix = assignedGate === Gate.GATE_2 ? 'A' : 'B';
-    const activeInGate = drivers.filter(d => d.gate === assignedGate && d.queueNumber).length;
-    const queueNum = `${prefix}-${String(activeInGate + 1).padStart(3, '0')}`;
-    
-    const updatePayload = {
-        id,
-        status: QueueStatus.VERIFIED,
-        gate: assignedGate,
-        queueNumber: queueNum,
-        verifiedTime: Date.now(),
-        verifiedBy: securityName,
-        securityNotes: notes,
-        arrivedAtGateTime: driver.arrivedAtGateTime || Date.now()
+    const newDriver: DriverData = {
+        ...data as DriverData,
+        id: newId,
+        bookingCode: bookingCode,
+        status: QueueStatus.BOOKED,
+        checkInTime: Date.now(),
+        documentFile: docFile, // Simpan Base64 langsung di LocalStorage (Hati-hati size limit 5MB)
+        gate: Gate.NONE,
+        queueNumber: '-',
     };
 
-    await apiRequest('drivers', 'UPDATE', updatePayload);
-    logActivity('VERIFY_DRIVER', `Driver ${driver.licensePlate} verified`, securityName);
-    
-    // --- TEMPLATE #2A: TIKET ANTRIAN (KE DRIVER) ---
-    if (driver.phone) {
-      const driverMsg = `TIKET ANTRIAN ANDA 🎫\n` +
-                        `Halo ${driver.name},\n` +
-                        `Check-in Anda telah disetujui!\n` +
-                        `🔢 Nomor Antrian: #${queueNum}\n` +
-                        `⏰ Estimasi Panggilan: Segera\n` +
-                        `📍 Posisi: ${activeInGate + 1} dari ${activeInGate + 1} antrian\n` +
-                        `Silakan tunggu di area parkir.\n` +
-                        `Anda akan dipanggil via WA saat giliran tiba.\n` +
-                        `Status antrian dapat dilihat di layar monitor area parkir.\n` +
-                        `Sociolla Warehouse Management`;
-      sendWhatsApp(driver.phone, driverMsg);
+    drivers.push(newDriver);
+    setStorage(DB_KEY_DRIVERS, drivers);
+
+    // Kirim WA Mock
+    if (newDriver.phone) {
+        const msg = `*KONFIRMASI BOOKING (LOCAL)* ✅\nBooking: ${bookingCode}`;
+        sendWANotification(newDriver.phone, msg);
     }
 
-    // --- TEMPLATE #2B: NOTIFIKASI KE GROUP OPERASIONAL ---
-    const groupMessage = `NOTIFIKASI OPERASIONAL TRAFFIC GUDANG 📦\n` +
-                         `STATUS: ENTRY APPROVED (AKSES MASUK) ✅\n` +
-                         `DETAIL UNIT:\n` +
-                         `Vendor : ${driver.company}\n` +
-                         `No. Pol : ${driver.licensePlate}\n` +
-                         `Driver : ${driver.name}\n` +
-                         `Dokumen : ${driver.doNumber}\n` +
-                         `Kegiatan : ${driver.purpose}\n` +
-                         `ALOKASI:\n` +
-                         `Gate : ${assignedGate.replace(/_/g, ' ')}\n` +
-                         `Antrian : #${queueNum}\n` +
-                         `Waktu : ${new Date().toLocaleTimeString('id-ID')} WIB\n` +
-                         `Petugas : ${securityName}\n` +
-                         `Notifikasi personal sudah dikirim ke driver.\n` +
-                         `Sociolla Warehouse Management`;
-    
-    await sendWhatsApp(WA_GROUP_ID, groupMessage);
-    
+    return newDriver;
+};
+
+export const confirmArrivalCheckIn = async (id: string, notes: string, editData?: Partial<DriverData>, newDoc?: string): Promise<DriverData> => {
+    await delay(300);
+    const drivers = getStorage<DriverData[]>(DB_KEY_DRIVERS, []);
+    const idx = drivers.findIndex(d => d.id === id);
+
+    if (idx === -1) throw new Error("Driver not found");
+
+    const updatedDriver = {
+        ...drivers[idx],
+        ...editData,
+        status: QueueStatus.AT_GATE,
+        arrivedAtGateTime: Date.now(),
+        securityNotes: notes,
+        documentFile: newDoc || drivers[idx].documentFile
+    };
+
+    drivers[idx] = updatedDriver;
+    setStorage(DB_KEY_DRIVERS, drivers);
+    return updatedDriver;
+};
+
+export const verifyDriver = async (id: string, verifier: string, notes: string, photos: string[]): Promise<boolean> => {
+    await delay(300);
+    const drivers = getStorage<DriverData[]>(DB_KEY_DRIVERS, []);
+    const idx = drivers.findIndex(d => d.id === id);
+
+    if (idx === -1) return false;
+
+    // Hitung Antrian
+    const verifiedCount = drivers.filter(d => d.status === QueueStatus.VERIFIED).length;
+    const queueNumber = `Q-${(verifiedCount + 1).toString().padStart(3, '0')}`;
+
+    const updatedDriver = {
+        ...drivers[idx],
+        status: QueueStatus.VERIFIED,
+        verifiedBy: verifier,
+        verifiedTime: Date.now(),
+        securityNotes: notes,
+        queueNumber: queueNumber,
+        photoBeforeURLs: photos // Simpan base64 foto
+    };
+
+    drivers[idx] = updatedDriver;
+    setStorage(DB_KEY_DRIVERS, drivers);
+
+    // WA Notifications
+    if (updatedDriver.phone) {
+        sendWANotification(updatedDriver.phone, `*TIKET ANTRIAN* 🎫\nNo: ${queueNumber}`);
+    }
+    const groupID = getWAGroupID();
+    sendWANotification(groupID, `*OPS REPORT* 📦\nUnit Masuk: ${updatedDriver.licensePlate}`);
+
     return true;
 };
 
-export const rejectDriver = async (id: string, reason: string, securityName: string) => {
-    const driver = await getDriverById(id);
-    await apiRequest('drivers', 'UPDATE', {
-        id,
-        status: QueueStatus.REJECTED,
-        rejectionReason: reason,
-        verifiedBy: securityName
-    });
+export const rejectDriver = async (id: string, reason: string, verifier: string): Promise<boolean> => {
+    await delay(300);
+    const drivers = getStorage<DriverData[]>(DB_KEY_DRIVERS, []);
+    const idx = drivers.findIndex(d => d.id === id);
+    if (idx === -1) return false;
 
-    // --- TEMPLATE #3: NOTIFIKASI PENOLAKAN ---
-    if (driver && driver.phone) {
-      const msg = `BOOKING DITOLAK ❌\n` +
-                  `Halo ${driver.name},\n` +
-                  `Mohon maaf, booking Anda untuk:\n` +
-                  `Tanggal: ${new Date().toLocaleDateString('id-ID')}\n` +
-                  `No. Polisi: ${driver.licensePlate}\n` +
-                  `Tidak dapat diproses dengan alasan:\n` +
-                  `"${reason}"\n` +
-                  `💡 Solusi:\n` +
-                  `Silakan hubungi admin di 0812-3456-7890 atau booking ulang dengan dokumen lengkap.\n` +
-                  `Terima kasih atas pengertiannya.\n` +
-                  `Sociolla Warehouse Management`;
-      sendWhatsApp(driver.phone, msg);
+    drivers[idx].status = QueueStatus.REJECTED;
+    drivers[idx].rejectionReason = reason;
+    drivers[idx].verifiedBy = verifier;
+
+    setStorage(DB_KEY_DRIVERS, drivers);
+
+    if (drivers[idx].phone) {
+        sendWANotification(drivers[idx].phone, `*DITOLAK* ❌\nAlasan: ${reason}`);
     }
-
-    logActivity('REJECT_DRIVER', `Rejected: ${reason}`, securityName);
-};
-
-export const updateDriverStatus = async (id: string, status: QueueStatus) => {
-    const driver = await getDriverById(id);
-    const updatePayload: any = { id, status };
-    
-    if(status === QueueStatus.LOADING) updatePayload.loadingStartTime = Date.now();
-    if(status === QueueStatus.COMPLETED) updatePayload.endTime = Date.now();
-    
-    if(status === QueueStatus.EXITED) {
-        updatePayload.exitTime = Date.now();
-        updatePayload.exitVerifiedBy = "Security Out";
-
-        // --- TEMPLATE #4: NOTIFIKASI SELESAI (CHECKOUT) ---
-        if (driver && driver.phone) {
-            const duration = Math.floor((Date.now() - (driver.checkInTime || Date.now())) / 60000);
-            const msg = `CHECKOUT BERHASIL ✅\n` +
-                        `Terima kasih ${driver.name}!\n` +
-                        `📦 Ringkasan Kunjungan:\n` +
-                        `Waktu Masuk: ${new Date(driver.checkInTime).toLocaleTimeString('id-ID')} WIB\n` +
-                        `Waktu Keluar: ${new Date().toLocaleTimeString('id-ID')} WIB\n` +
-                        `Durasi: ${duration} Menit\n` +
-                        `No. Antrian: #${driver.queueNumber || '-'}\n` +
-                        `Semoga perjalanan pulang lancar! 🚚💨\n` +
-                        `Jika ada kendala, hubungi security:\n` +
-                        `0812-3456-7890\n` +
-                        `Sociolla Warehouse Management`;
-            sendWhatsApp(driver.phone, msg);
-        }
-    }
-
-    await apiRequest('drivers', 'UPDATE', updatePayload);
-    logActivity('UPDATE_STATUS', `Status changed to ${status}`, 'Admin');
-};
-
-export const scanDriverQR = async (id: string): Promise<DriverData | undefined> => {
-  const driver = await getDriverById(id);
-  if (driver && driver.status !== QueueStatus.AT_GATE) {
-     const updated = { id: driver.id, status: QueueStatus.AT_GATE, arrivedAtGateTime: Date.now() };
-     await apiRequest('drivers', 'UPDATE', updated);
-     return { ...driver, ...updated };
-  }
-  return driver;
-};
-
-// --- SISA HELPER FUNCTION (TIDAK BERUBAH) ---
-export const getDivisions = async (): Promise<DivisionConfig[]> => apiRequest('divisions', 'GET');
-export const saveDivision = async (div: Partial<DivisionConfig>): Promise<boolean> => {
-    const divisions = await getDivisions();
-    const exists = divisions.find(d => d.id === div.id);
-    if (exists) await apiRequest('divisions', 'UPDATE', div);
-    else await apiRequest('divisions', 'CREATE', { ...div, id: div.id!.toUpperCase(), theme: div.theme || 'slate' });
     return true;
 };
-export const deleteDivision = async (id: string): Promise<boolean> => { apiRequest('divisions', 'DELETE', { id }); return true; };
-export const getGateConfigs = async (): Promise<GateConfig[]> => apiRequest('gates', 'GET');
-export const saveGateConfig = async (gate: Partial<GateConfig>): Promise<boolean> => {
-    const gates = await getGateConfigs();
-    const exists = gates.find(g => g.id === gate.id);
-    if (exists) await apiRequest('gates', 'UPDATE', gate);
-    else await apiRequest('gates', 'CREATE', { ...gate, id: gate.id || `gate-${Date.now()}` });
+
+export const callDriver = async (id: string, caller: string, gate: string): Promise<boolean> => {
+    await delay(300);
+    const drivers = getStorage<DriverData[]>(DB_KEY_DRIVERS, []);
+    const idx = drivers.findIndex(d => d.id === id);
+    if (idx === -1) return false;
+
+    drivers[idx].status = QueueStatus.CALLED;
+    drivers[idx].gate = gate as Gate; // Simplifikasi tipe
+    drivers[idx].calledBy = caller;
+    drivers[idx].calledTime = Date.now();
+
+    setStorage(DB_KEY_DRIVERS, drivers);
     return true;
 };
-export const deleteSystemSetting = async (id: string): Promise<boolean> => { apiRequest('gates', 'DELETE', { id }); return true; };
-export const getProfiles = async (): Promise<UserProfile[]> => apiRequest('users', 'GET');
-export const addProfile = async (profile: Partial<UserProfile>): Promise<boolean> => {
-    const users = await getProfiles();
-    if (users.find(u => u.id === profile.id)) return false;
-    await apiRequest('users', 'CREATE', { ...profile, status: 'ACTIVE' });
+
+export const updateDriverStatus = async (id: string, status: QueueStatus): Promise<boolean> => {
+    await delay(300);
+    const drivers = getStorage<DriverData[]>(DB_KEY_DRIVERS, []);
+    const idx = drivers.findIndex(d => d.id === id);
+    if (idx === -1) return false;
+
+    drivers[idx].status = status;
+    if (status === QueueStatus.LOADING) drivers[idx].loadingStartTime = Date.now();
+
+    setStorage(DB_KEY_DRIVERS, drivers);
     return true;
 };
-export const updateProfile = async (profile: Partial<UserProfile>): Promise<boolean> => { apiRequest('users', 'UPDATE', profile); return true; };
-export const deleteProfile = async (id: string): Promise<boolean> => { apiRequest('users', 'DELETE', { id }); return true; };
-export const callDriver = async (id: string, adminName: string) => {
-    await apiRequest('drivers', 'UPDATE', { id, status: QueueStatus.CALLED, calledTime: Date.now(), calledBy: adminName });
-};
-export const getActivityLogs = async (): Promise<ActivityLog[]> => apiRequest('logs', 'GET');
-export const wipeDatabase = async () => {
-    console.warn("Wipe Database via API is disabled for safety.");
-    logActivity('WIPE_ATTEMPT', 'Wipe database requested but disabled', 'Manager');
-};
-export const seedDummyData = async () => {
-    const dummyNames = ['Budi', 'Joko', 'Siti', 'Rahmat', 'Dewi'];
-    const dummyPlates = ['B 1234 XY', 'D 5678 AB', 'L 9999 ZZ', 'B 4444 CD', 'F 1111 GH'];
-    for (let i = 0; i < 5; i++) {
-        await createCheckIn({
-            name: dummyNames[i],
-            licensePlate: dummyPlates[i],
-            phone: '08123456789',
-            company: 'Vendor Dummy Trans',
-            purpose: i % 2 === 0 ? 'LOADING' : 'UNLOADING',
-            doNumber: `DO/TEST/${i+100}`,
-            notes: 'Dummy data injection',
-            entryType: EntryType.WALK_IN
-        });
+
+export const checkoutDriver = async (id: string, verifier: string, notes: string, photos: string[]): Promise<boolean> => {
+    await delay(300);
+    const drivers = getStorage<DriverData[]>(DB_KEY_DRIVERS, []);
+    const idx = drivers.findIndex(d => d.id === id);
+    if (idx === -1) return false;
+
+    drivers[idx].status = QueueStatus.EXITED; // Atau QueueStatus.COMPLETED jika itu status akhirnya
+    drivers[idx].exitVerifiedBy = verifier;
+    drivers[idx].exitTime = Date.now();
+    drivers[idx].notes = notes;
+    drivers[idx].photoAfterURLs = photos;
+
+    setStorage(DB_KEY_DRIVERS, drivers);
+
+    if (drivers[idx].phone) {
+        sendWANotification(drivers[idx].phone, `*CHECKOUT BERHASIL* ✅`);
     }
-};
-export const exportDatabase = () => { return JSON.stringify({ message: "Please contact IT for DB Dump" }); };
-export const importDatabase = (jsonString: string) => { console.warn("Import not supported in Cloud Mode"); return false; };
-
-// --- 🛑 FIX MISSING FUNCTIONS (AGAR TIDAK ERROR BUILD LAGI) 🛑 ---
-
-export const getDevConfig = () => {
-    try {
-      const saved = localStorage.getItem('yms_dev_settings');
-      return saved ? JSON.parse(saved) : {};
-    } catch (e) {
-      return {};
-    }
+    return true;
 };
 
-export const getAvailableSlots = async () => {
-    // Implementasi sederhana untuk menghindari error
-    return { total: 10, used: 0, available: 10 };
+// --- LOOKUP UTILS ---
+
+export const findBookingByCode = async (code: string): Promise<DriverData | null> => {
+    const drivers = getStorage<DriverData[]>(DB_KEY_DRIVERS, []);
+    return drivers.find(d => d.bookingCode === code) || null;
 };
 
-export const findBookingByCode = async (code: string) => {
-    const drivers = await getDrivers();
-    return drivers.find(d => d.id === code);
-};
-
-export const findBookingByPlateOrPhone = async (query: string) => {
-    const drivers = await getDrivers();
+export const findBookingByPlateOrPhone = async (query: string): Promise<DriverData | null> => {
+    const drivers = getStorage<DriverData[]>(DB_KEY_DRIVERS, []);
     const q = query.toLowerCase();
-    return drivers.find(d => d.licensePlate.toLowerCase().includes(q) || d.phone?.includes(q));
+    return drivers.find(d =>
+        (d.licensePlate.toLowerCase().includes(q) || d.phone === q) &&
+        [QueueStatus.BOOKED].includes(d.status)
+    ) || null;
 };
 
-export const confirmArrivalCheckIn = async (id: string) => {
-    return await scanDriverQR(id);
+export const scanDriverQR = async (id: string): Promise<DriverData | null> => {
+    let driver = await getDriverById(id);
+    if (!driver) {
+        // Coba cari by booking code
+        driver = await findBookingByCode(id);
+    }
+    return driver;
 };
+
+export const getAvailableSlots = async (date: string): Promise<SlotInfo[]> => {
+    const times = ["08:00 - 10:00", "10:00 - 12:00", "13:00 - 15:00", "15:00 - 17:00"];
+    const drivers = getStorage<DriverData[]>(DB_KEY_DRIVERS, []);
+
+    return times.map(t => {
+        const booked = drivers.filter(d => d.slotDate === date && d.slotTime === t && d.status !== QueueStatus.CANCELLED).length;
+        const capacity = 10;
+        return {
+            id: t,
+            timeLabel: t,
+            capacity,
+            booked,
+            isAvailable: booked < capacity
+        };
+    });
+};
+
+// --- MASTER DATA MANAGEMENT ---
+
+export const getGateConfigs = async (): Promise<GateConfig[]> => {
+    await delay(100);
+    return getStorage<GateConfig[]>(DB_KEY_GATES, []);
+};
+
+export const saveGateConfig = async (gate: GateConfig): Promise<boolean> => {
+    const gates = getStorage<GateConfig[]>(DB_KEY_GATES, []);
+    const idx = gates.findIndex(g => g.id === gate.id);
+    if (idx >= 0) gates[idx] = gate;
+    else gates.push(gate);
+    setStorage(DB_KEY_GATES, gates);
+    return true;
+};
+
+export const deleteSystemSetting = async (id: string): Promise<boolean> => {
+    let gates = getStorage<GateConfig[]>(DB_KEY_GATES, []);
+    gates = gates.filter(g => g.id !== id);
+    setStorage(DB_KEY_GATES, gates);
+    return true;
+};
+
+export const getProfiles = async (): Promise<UserProfile[]> => {
+    await delay(100);
+    return getStorage<UserProfile[]>(DB_KEY_USERS, []);
+};
+
+export const addProfile = async (user: UserProfile): Promise<boolean> => {
+    const users = getStorage<UserProfile[]>(DB_KEY_USERS, []);
+    if (users.find(u => u.id === user.id)) return false;
+    users.push(user);
+    setStorage(DB_KEY_USERS, users);
+    return true;
+};
+
+export const updateProfile = async (user: Partial<UserProfile>): Promise<boolean> => {
+    const users = getStorage<UserProfile[]>(DB_KEY_USERS, []);
+    const idx = users.findIndex(u => u.id === user.id);
+    if (idx === -1) return false;
+    users[idx] = { ...users[idx], ...user };
+    setStorage(DB_KEY_USERS, users);
+    return true;
+};
+
+export const deleteProfile = async (id: string): Promise<boolean> => {
+    let users = getStorage<UserProfile[]>(DB_KEY_USERS, []);
+    users = users.filter(u => u.id !== id);
+    setStorage(DB_KEY_USERS, users);
+    return true;
+};
+
+export const getDivisions = async (): Promise<DivisionConfig[]> => {
+    await delay(100);
+    return getStorage<DivisionConfig[]>(DB_KEY_DIVISIONS, []);
+};
+
+export const saveDivision = async (div: DivisionConfig): Promise<boolean> => {
+    const divs = getStorage<DivisionConfig[]>(DB_KEY_DIVISIONS, []);
+    const idx = divs.findIndex(d => d.id === div.id);
+    if (idx >= 0) divs[idx] = div;
+    else divs.push(div);
+    setStorage(DB_KEY_DIVISIONS, divs);
+    return true;
+};
+
+export const deleteDivision = async (id: string): Promise<boolean> => {
+    let divs = getStorage<DivisionConfig[]>(DB_KEY_DIVISIONS, []);
+    divs = divs.filter(d => d.id !== id);
+    setStorage(DB_KEY_DIVISIONS, divs);
+    return true;
+};
+
+export const loginSystem = async (id: string, pass: string): Promise<UserProfile> => {
+    await delay(500);
+    const users = getStorage<UserProfile[]>(DB_KEY_USERS, []);
+    const user = users.find(u => (u.id === id || u.name === id) && u.pin_code === pass); // Flexible login
+    if (!user) throw new Error("User atau PIN salah");
+    return user;
+};
+
+export const verifyDivisionCredential = async (id: string, pass: string): Promise<DivisionConfig | null> => {
+    await delay(500);
+    const divs = getStorage<DivisionConfig[]>(DB_KEY_DIVISIONS, []);
+    const div = divs.find(d => d.id === id && d.password === pass);
+    return div || null;
+};
+
+export const getActivityLogs = async (): Promise<ActivityLog[]> => {
+    return getStorage<ActivityLog[]>(DB_KEY_LOGS, []);
+};
+
+// --- SYSTEM UTILS ---
+
+export interface DevConfig {
+    enableGpsBypass: boolean;
+    enableMockOCR: boolean;
+}
+
+export const getDevConfig = (): DevConfig => {
+    return getStorage<DevConfig>(DB_KEY_CONFIG, { enableGpsBypass: false, enableMockOCR: false });
+};
+
+export const saveDevConfig = (cfg: DevConfig) => {
+    setStorage(DB_KEY_CONFIG, cfg);
+};
+
+export const wipeDatabase = async () => {
+    localStorage.clear();
+    seedLocalData(); // Reseed basic data
+};
+
+export const seedDummyData = async (force?: boolean) => {
+    const drivers = getStorage<DriverData[]>(DB_KEY_DRIVERS, []);
+
+    // Create Dummy Drivers
+    const dummy: DriverData = {
+        id: `DUMMY-${Date.now()}`,
+        name: "Budi Santoso (Dummy)",
+        licensePlate: "B 1234 TES",
+        company: "PT Logistik Test",
+        status: QueueStatus.BOOKED,
+        bookingCode: "TEST01",
+        checkInTime: Date.now(),
+        doNumber: "DO-TEST-001",
+        phone: "08123456789",
+        entryType: EntryType.BOOKING,
+        purpose: 'LOADING',
+        priority: Priority.NORMAL,
+        gate: Gate.NONE
+    };
+
+    drivers.push(dummy);
+    setStorage(DB_KEY_DRIVERS, drivers);
+};
+
+export const checkDatabaseConnection = async (): Promise<boolean> => {
+    return true; // LocalStorage selalu connected
+};
+
+export const exportDatabase = (): string => {
+    const dump = {
+        drivers: getStorage(DB_KEY_DRIVERS, []),
+        users: getStorage(DB_KEY_USERS, []),
+        gates: getStorage(DB_KEY_GATES, []),
+        config: getStorage(DB_KEY_CONFIG, {})
+    };
+    return JSON.stringify(dump, null, 2);
+};
+
+export const importDatabase = (json: string): boolean => {
+    try {
+        const data = JSON.parse(json);
+        if (data.drivers) setStorage(DB_KEY_DRIVERS, data.drivers);
+        if (data.users) setStorage(DB_KEY_USERS, data.users);
+        if (data.gates) setStorage(DB_KEY_GATES, data.gates);
+        if (data.config) setStorage(DB_KEY_CONFIG, data.config);
+        return true;
+    } catch (e) {
+        console.error("Import failed", e);
+        return false;
+    }
+};
+
+// --- LEGACY EXPORTS COMPATIBILITY ---
+export const fetchWAGroups = async () => { return []; };
+export const sendPersonalNotification = async (target: string, msg: string) => sendWANotification(target, msg);
+export const sendGroupNotification = async (msg: string) => sendWANotification('GROUP', msg);
+export const sendDailyReportToGroup = async () => true;
