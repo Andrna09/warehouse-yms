@@ -1,31 +1,36 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  // 1. Pastikan Metode Pengiriman Benar (Harus POST)
-  // Mencegah akses langsung dari browser (GET) yang tidak diinginkan
+  // 1. Pastikan Method POST
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed (Gunakan POST)' });
   }
 
-  const { target, message } = req.body;
-
-  // 2. AMBIL TOKEN DARI VERCEL ENVIRONMENT VARIABLES
-  // Pastikan Anda sudah memasukkan "FONNTE_TOKEN" di Dashboard Vercel
-  const token = process.env.FONNTE_TOKEN;
-
-  // Cek Kritis: Apakah token ada?
-  if (!token) {
-    console.error("FATAL ERROR: FONNTE_TOKEN hilang dari Environment Variables Vercel.");
-    console.error("Solusi: Buka Vercel > Project Settings > Environment Variables > Tambahkan FONNTE_TOKEN");
-    
-    return res.status(500).json({ 
-      error: 'Server Misconfiguration: Token WA belum disetting di Vercel.',
-      action: 'Check Vercel Logs for details'
-    });
-  }
-
+  // --- REVISI: SEMUA LOGIKA MASUK KE DALAM TRY/CATCH ---
   try {
-    // 3. KIRIM PERMINTAAN KE API FONNTE
+    // Cek apakah body ada isinya
+    if (!req.body) {
+      throw new Error("Request Body kosong. Pastikan mengirim JSON.");
+    }
+
+    const { target, message } = req.body;
+
+    // Validasi input
+    if (!target || !message) {
+      return res.status(400).json({ error: 'Target dan Message wajib diisi' });
+    }
+
+    // 2. Ambil Token
+    const token = process.env.FONNTE_TOKEN;
+    if (!token) {
+      console.error("FATAL: FONNTE_TOKEN belum di-setting di Vercel.");
+      return res.status(500).json({ 
+        error: 'Server Config Error: Token WA belum ada.',
+        action: 'Cek Environment Variables di Vercel'
+      });
+    }
+
+    // 3. Kirim ke Fonnte
     const response = await fetch('https://api.fonnte.com/send', {
       method: 'POST',
       headers: {
@@ -35,37 +40,33 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       body: JSON.stringify({
         target: target,
         message: message,
-        countryCode: '62', // Fitur: Otomatis ubah 08xx menjadi 628xx
+        countryCode: '62',
       }),
     });
 
     const data = await response.json();
 
-    // 4. VALIDASI RESPON DARI FONNTE (BAGIAN PENTING!)
-    // Fonnte bisa me-return status 200 HTTP meskipun pesan GAGAL terkirim (misal: nomor salah).
-    // Kita wajib mengecek properti "status" di dalam body JSON.
-    
+    // 4. Cek Status dari Fonnte
     if (!data.status) {
-        // Jika status = false, berarti GAGAL.
-        console.error("Fonnte API Menolak Request:", data);
-        
-        // Kita return Error 500 supaya Frontend (dataService.ts) tahu ini gagal
-        return res.status(500).json({ 
-            error: 'Gagal mengirim WA (Ditolak Provider)',
-            reason: data.reason || 'Token salah, kuota habis, atau nomor tidak valid',
-            debug_info: data
-        });
+      console.error("Fonnte Reject:", data);
+      return res.status(500).json({
+        error: 'Gagal kirim WA (Ditolak Provider)',
+        reason: data.reason || 'Token salah / Kuota habis / Nomor invalid',
+        debug: data
+      });
     }
 
-    // Jika sampai sini, berarti SUKSES Murni
+    // Sukses
     return res.status(200).json(data);
 
   } catch (error: any) {
-    // Error Jaringan atau Server Crash
-    console.error('WhatsApp Handler Crash:', error);
-    return res.status(500).json({ 
-        error: 'Internal Server Error saat menghubungi WhatsApp',
-        details: error.message 
+    // JIKA CRASH, TANGKAP DISINI
+    console.error('SERVER CRASH:', error);
+    
+    // Return JSON Error supaya frontend tidak "SyntaxError"
+    return res.status(500).json({
+      error: 'Terjadi kesalahan di Server (API Crash)',
+      details: error.message || String(error)
     });
   }
 }
