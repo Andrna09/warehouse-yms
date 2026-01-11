@@ -59,20 +59,42 @@ export const saveWAGroupID = (id: string) => {
     localStorage.setItem(DB_KEY_WA_GROUP, id);
 };
 
-// --- 🔥 WHATSAPP ENGINE (REAL API) 🔥 ---
-// Fungsi ini sekarang benar-benar mengirim request ke API, bukan hanya console.log
+// --- 🔥 WHATSAPP ENGINE (REVISED & SECURE) 🔥 ---
+// UPDATE: Menambahkan error logging dan pembersihan nomor HP
 const sendWANotification = async (target: string, message: string) => {
     if (!target) return false;
+    
+    // 1. Bersihkan nomor HP (hanya ambil angka) agar format sesuai
+    const cleanTarget = target.replace(/[^0-9]/g, '');
+
     try {
+        console.log(`[WA DEBUG] Mengirim ke: ${cleanTarget}`);
+
         const response = await fetch('/api/whatsapp', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ target, message }),
+            body: JSON.stringify({ target: cleanTarget, message }),
         });
+
         const result = await response.json();
-        return result.status === true;
+
+        // 2. Cek apakah Server menolak (Status bukan 200 OK)
+        if (!response.ok) {
+            console.error("[WA ERROR] Server menolak:", result);
+            return false;
+        }
+
+        // 3. Cek apakah Fonnte menolak (Status false dalam body response)
+        if (result.status === false) {
+             console.error("[WA ERROR] Fonnte menolak:", result);
+             return false;
+        }
+
+        console.log("[WA SUKSES] Terkirim:", result);
+        return true;
+
     } catch (error) {
-        console.error("WA Error:", error);
+        console.error("[WA SYSTEM ERROR] Koneksi gagal:", error);
         return false;
     }
 };
