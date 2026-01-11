@@ -9,7 +9,7 @@ const DB_KEY_LOGS = 'yms_logs_v1';
 const DB_KEY_CONFIG = 'yms_dev_config';
 const DB_KEY_WA_GROUP = 'wa_group_id';
 
-// --- INITIAL DATA SEEDING ---
+// --- INITIAL DATA SEEDING (Agar tidak kosong saat pertama buka) ---
 const seedLocalData = () => {
     if (!localStorage.getItem(DB_KEY_GATES)) {
         const defaultGates: GateConfig[] = [
@@ -39,10 +39,13 @@ const seedLocalData = () => {
     }
 };
 
+// Jalankan Seeding
 seedLocalData();
 
+// --- HELPER: SIMULATE ASYNC DELAY ---
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
+// --- HELPER: LOCAL STORAGE WRAPPER ---
 const getStorage = <T>(key: string, defaultVal: T): T => {
     const item = localStorage.getItem(key);
     return item ? JSON.parse(item) : defaultVal;
@@ -52,8 +55,7 @@ const setStorage = (key: string, val: any) => {
     localStorage.setItem(key, JSON.stringify(val));
 };
 
-// --- WHATSAPP SERVICES (PRODUCTION READY) ---
-
+// --- WHATSAPP MOCK (Agar tidak error 404 ke API) ---
 export const getWAGroupID = (): string => {
     return localStorage.getItem(DB_KEY_WA_GROUP) || '120363423657558569@g.us';
 };
@@ -66,32 +68,21 @@ const formatPhone = (phone: string): string => {
     return phone.replace(/\D/g, '').replace(/^0/, '62');
 };
 
-/**
- * REVISI: Fungsi Kirim WA menggunakan API Vercel
- */
-const sendWANotification = async (target: string, message: string): Promise<boolean> => {
-    try {
-        const response = await fetch('/api/whatsapp', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ target, message }),
-        });
-        const result = await response.json();
-        if (response.ok && result.status === true) {
-            console.log(`%c[WA SENT] To: ${target}`, 'color: #25D366; font-weight: bold;');
-            return true;
-        }
-        return false;
-    } catch (error) {
-        console.error('WhatsApp Error:', error);
-        return false;
-    }
+const formatWADate = (timestamp: number) => new Date(timestamp).toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' });
+const formatWATime = (timestamp: number) => new Date(timestamp).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' });
+
+const sendWANotification = async (target: string, message: string) => {
+    // MOCK: Hanya log ke console karena API tidak ada di local
+    console.log(`%c[MOCK WA SENT] To: ${target}`, 'color: #25D366; font-weight: bold;');
+    console.log(message);
+    // Kita return success fake
+    return true;
 };
 
-// --- DRIVER SERVICES ---
+// --- DRIVER SERVICES (LOCAL STORAGE) ---
 
 export const getDrivers = async (): Promise<DriverData[]> => {
-    await delay(200);
+    await delay(200); // Simulasi loading sedikit agar UI tidak kedip terlalu cepat
     return getStorage<DriverData[]>(DB_KEY_DRIVERS, []);
 };
 
@@ -101,12 +92,11 @@ export const getDriverById = async (id: string): Promise<DriverData | null> => {
     return drivers.find(d => d.id === id) || null;
 };
 
-/**
- * REVISI: Template #1 - Konfirmasi Booking Berhasil
- */
 export const createCheckIn = async (data: Partial<DriverData>, docFile?: string): Promise<DriverData> => {
     await delay(500);
     const drivers = getStorage<DriverData[]>(DB_KEY_DRIVERS, []);
+
+    // Generate ID Unik
     const newId = `DRV-${Date.now()}-${Math.floor(Math.random()*1000)}`;
     const bookingCode = `SOC-${Math.floor(Math.random()*10000).toString().padStart(4,'0')}`;
 
@@ -116,7 +106,7 @@ export const createCheckIn = async (data: Partial<DriverData>, docFile?: string)
         bookingCode: bookingCode,
         status: QueueStatus.BOOKED,
         checkInTime: Date.now(),
-        documentFile: docFile,
+        documentFile: docFile, // Simpan Base64 langsung di LocalStorage (Hati-hati size limit 5MB)
         gate: Gate.NONE,
         queueNumber: '-',
     };
@@ -124,20 +114,9 @@ export const createCheckIn = async (data: Partial<DriverData>, docFile?: string)
     drivers.push(newDriver);
     setStorage(DB_KEY_DRIVERS, drivers);
 
+    // Kirim WA Mock
     if (newDriver.phone) {
-        const msg = `*KONFIRMASI BOOKING BERHASIL* ✅\n\n` +
-                    `Halo ${newDriver.name},\n` +
-                    `Booking Anda telah terdaftar:\n\n` +
-                    `📋 *Detail Booking:*\n` +
-                    `Kode: ${bookingCode}\n` +
-                    `No. Pol: ${newDriver.licensePlate}\n` +
-                    `Vendor: ${newDriver.company}\n\n` +
-                    `⚠️ *Harap diingat:*\n` +
-                    `- Datang 15 menit lebih awal\n` +
-                    `- Scan QR di security saat tiba\n` +
-                    `- Siapkan dokumen lengkap\n\n` +
-                    `Terima kasih! 🚚\n` +
-                    `_Sociolla Warehouse Management_`;
+        const msg = `*KONFIRMASI BOOKING (LOCAL)* ✅\nBooking: ${bookingCode}`;
         sendWANotification(newDriver.phone, msg);
     }
 
@@ -148,6 +127,7 @@ export const confirmArrivalCheckIn = async (id: string, notes: string, editData?
     await delay(300);
     const drivers = getStorage<DriverData[]>(DB_KEY_DRIVERS, []);
     const idx = drivers.findIndex(d => d.id === id);
+
     if (idx === -1) throw new Error("Driver not found");
 
     const updatedDriver = {
@@ -164,15 +144,14 @@ export const confirmArrivalCheckIn = async (id: string, notes: string, editData?
     return updatedDriver;
 };
 
-/**
- * REVISI: Template #2A & #2B - Tiket Antrian & Report Ops
- */
 export const verifyDriver = async (id: string, verifier: string, notes: string, photos: string[]): Promise<boolean> => {
     await delay(300);
     const drivers = getStorage<DriverData[]>(DB_KEY_DRIVERS, []);
     const idx = drivers.findIndex(d => d.id === id);
+
     if (idx === -1) return false;
 
+    // Hitung Antrian
     const verifiedCount = drivers.filter(d => d.status === QueueStatus.VERIFIED).length;
     const queueNumber = `Q-${(verifiedCount + 1).toString().padStart(3, '0')}`;
 
@@ -183,36 +162,22 @@ export const verifyDriver = async (id: string, verifier: string, notes: string, 
         verifiedTime: Date.now(),
         securityNotes: notes,
         queueNumber: queueNumber,
-        photoBeforeURLs: photos
+        photoBeforeURLs: photos // Simpan base64 foto
     };
 
     drivers[idx] = updatedDriver;
     setStorage(DB_KEY_DRIVERS, drivers);
 
+    // WA Notifications
     if (updatedDriver.phone) {
-        const msgDriver = `*TIKET ANTRIAN ANDA* 🎫\n\n` +
-                          `Halo ${updatedDriver.name},\n` +
-                          `🔢 Nomor Antrian: *#${queueNumber}*\n\n` +
-                          `Silakan tunggu di area parkir. Anda akan dipanggil via WA saat giliran tiba.\n` +
-                          `_Sociolla Warehouse Management_`;
-        sendWANotification(updatedDriver.phone, msgDriver);
+        sendWANotification(updatedDriver.phone, `*TIKET ANTRIAN* 🎫\nNo: ${queueNumber}`);
     }
-
     const groupID = getWAGroupID();
-    const msgGroup = `*NOTIFIKASI OPERASIONAL* 📦\n` +
-                     `STATUS: *ENTRY APPROVED* ✅\n\n` +
-                     `Vendor: ${updatedDriver.company}\n` +
-                     `No. Pol: ${updatedDriver.licensePlate}\n` +
-                     `Antrian: #${queueNumber}\n` +
-                     `Petugas: ${verifier}`;
-    sendWANotification(groupID, msgGroup);
+    sendWANotification(groupID, `*OPS REPORT* 📦\nUnit Masuk: ${updatedDriver.licensePlate}`);
 
     return true;
 };
 
-/**
- * REVISI: Template #3 - Notifikasi Penolakan
- */
 export const rejectDriver = async (id: string, reason: string, verifier: string): Promise<boolean> => {
     await delay(300);
     const drivers = getStorage<DriverData[]>(DB_KEY_DRIVERS, []);
@@ -226,13 +191,7 @@ export const rejectDriver = async (id: string, reason: string, verifier: string)
     setStorage(DB_KEY_DRIVERS, drivers);
 
     if (drivers[idx].phone) {
-        const msg = `*BOOKING DITOLAK* ❌\n\n` +
-                    `Halo ${drivers[idx].name},\n` +
-                    `Mohon maaf, unit ${drivers[idx].licensePlate} ditolak dengan alasan:\n` +
-                    `*"${reason}"*\n\n` +
-                    `💡 Silakan hubungi admin untuk info lebih lanjut.\n` +
-                    `_Sociolla Warehouse Management_`;
-        sendWANotification(drivers[idx].phone, msg);
+        sendWANotification(drivers[idx].phone, `*DITOLAK* ❌\nAlasan: ${reason}`);
     }
     return true;
 };
@@ -244,7 +203,7 @@ export const callDriver = async (id: string, caller: string, gate: string): Prom
     if (idx === -1) return false;
 
     drivers[idx].status = QueueStatus.CALLED;
-    drivers[idx].gate = gate as Gate;
+    drivers[idx].gate = gate as Gate; // Simplifikasi tipe
     drivers[idx].calledBy = caller;
     drivers[idx].calledTime = Date.now();
 
@@ -260,20 +219,18 @@ export const updateDriverStatus = async (id: string, status: QueueStatus): Promi
 
     drivers[idx].status = status;
     if (status === QueueStatus.LOADING) drivers[idx].loadingStartTime = Date.now();
+
     setStorage(DB_KEY_DRIVERS, drivers);
     return true;
 };
 
-/**
- * REVISI: Template #4 - Checkout Berhasil
- */
 export const checkoutDriver = async (id: string, verifier: string, notes: string, photos: string[]): Promise<boolean> => {
     await delay(300);
     const drivers = getStorage<DriverData[]>(DB_KEY_DRIVERS, []);
     const idx = drivers.findIndex(d => d.id === id);
     if (idx === -1) return false;
 
-    drivers[idx].status = QueueStatus.EXITED;
+    drivers[idx].status = QueueStatus.EXITED; // Atau QueueStatus.COMPLETED jika itu status akhirnya
     drivers[idx].exitVerifiedBy = verifier;
     drivers[idx].exitTime = Date.now();
     drivers[idx].notes = notes;
@@ -282,17 +239,13 @@ export const checkoutDriver = async (id: string, verifier: string, notes: string
     setStorage(DB_KEY_DRIVERS, drivers);
 
     if (drivers[idx].phone) {
-        const msg = `*CHECKOUT BERHASIL* ✅\n\n` +
-                    `Terima kasih ${drivers[idx].name}!\n` +
-                    `Unit ${drivers[idx].licensePlate} telah selesai checkout.\n` +
-                    `Semoga perjalanan pulang lancar! 🚚💨\n` +
-                    `_Sociolla Warehouse Management_`;
-        sendWANotification(drivers[idx].phone, msg);
+        sendWANotification(drivers[idx].phone, `*CHECKOUT BERHASIL* ✅`);
     }
     return true;
 };
 
-// --- LOOKUP & SYSTEM UTILS (TETAP SAMA) ---
+// --- LOOKUP UTILS ---
+
 export const findBookingByCode = async (code: string): Promise<DriverData | null> => {
     const drivers = getStorage<DriverData[]>(DB_KEY_DRIVERS, []);
     return drivers.find(d => d.bookingCode === code) || null;
@@ -309,35 +262,58 @@ export const findBookingByPlateOrPhone = async (query: string): Promise<DriverDa
 
 export const scanDriverQR = async (id: string): Promise<DriverData | null> => {
     let driver = await getDriverById(id);
-    if (!driver) driver = await findBookingByCode(id);
+    if (!driver) {
+        // Coba cari by booking code
+        driver = await findBookingByCode(id);
+    }
     return driver;
 };
 
 export const getAvailableSlots = async (date: string): Promise<SlotInfo[]> => {
     const times = ["08:00 - 10:00", "10:00 - 12:00", "13:00 - 15:00", "15:00 - 17:00"];
     const drivers = getStorage<DriverData[]>(DB_KEY_DRIVERS, []);
+
     return times.map(t => {
         const booked = drivers.filter(d => d.slotDate === date && d.slotTime === t && d.status !== QueueStatus.CANCELLED).length;
         const capacity = 10;
-        return { id: t, timeLabel: t, capacity, booked, isAvailable: booked < capacity };
+        return {
+            id: t,
+            timeLabel: t,
+            capacity,
+            booked,
+            isAvailable: booked < capacity
+        };
     });
 };
 
-export const getGateConfigs = async (): Promise<GateConfig[]> => { await delay(100); return getStorage<GateConfig[]>(DB_KEY_GATES, []); };
+// --- MASTER DATA MANAGEMENT ---
+
+export const getGateConfigs = async (): Promise<GateConfig[]> => {
+    await delay(100);
+    return getStorage<GateConfig[]>(DB_KEY_GATES, []);
+};
+
 export const saveGateConfig = async (gate: GateConfig): Promise<boolean> => {
     const gates = getStorage<GateConfig[]>(DB_KEY_GATES, []);
     const idx = gates.findIndex(g => g.id === gate.id);
-    if (idx >= 0) gates[idx] = gate; else gates.push(gate);
+    if (idx >= 0) gates[idx] = gate;
+    else gates.push(gate);
     setStorage(DB_KEY_GATES, gates);
     return true;
 };
+
 export const deleteSystemSetting = async (id: string): Promise<boolean> => {
     let gates = getStorage<GateConfig[]>(DB_KEY_GATES, []);
     gates = gates.filter(g => g.id !== id);
     setStorage(DB_KEY_GATES, gates);
     return true;
 };
-export const getProfiles = async (): Promise<UserProfile[]> => { await delay(100); return getStorage<UserProfile[]>(DB_KEY_USERS, []); };
+
+export const getProfiles = async (): Promise<UserProfile[]> => {
+    await delay(100);
+    return getStorage<UserProfile[]>(DB_KEY_USERS, []);
+};
+
 export const addProfile = async (user: UserProfile): Promise<boolean> => {
     const users = getStorage<UserProfile[]>(DB_KEY_USERS, []);
     if (users.find(u => u.id === user.id)) return false;
@@ -345,6 +321,7 @@ export const addProfile = async (user: UserProfile): Promise<boolean> => {
     setStorage(DB_KEY_USERS, users);
     return true;
 };
+
 export const updateProfile = async (user: Partial<UserProfile>): Promise<boolean> => {
     const users = getStorage<UserProfile[]>(DB_KEY_USERS, []);
     const idx = users.findIndex(u => u.id === user.id);
@@ -353,47 +330,78 @@ export const updateProfile = async (user: Partial<UserProfile>): Promise<boolean
     setStorage(DB_KEY_USERS, users);
     return true;
 };
+
 export const deleteProfile = async (id: string): Promise<boolean> => {
     let users = getStorage<UserProfile[]>(DB_KEY_USERS, []);
     users = users.filter(u => u.id !== id);
     setStorage(DB_KEY_USERS, users);
     return true;
 };
-export const getDivisions = async (): Promise<DivisionConfig[]> => { await delay(100); return getStorage<DivisionConfig[]>(DB_KEY_DIVISIONS, []); };
+
+export const getDivisions = async (): Promise<DivisionConfig[]> => {
+    await delay(100);
+    return getStorage<DivisionConfig[]>(DB_KEY_DIVISIONS, []);
+};
+
 export const saveDivision = async (div: DivisionConfig): Promise<boolean> => {
     const divs = getStorage<DivisionConfig[]>(DB_KEY_DIVISIONS, []);
     const idx = divs.findIndex(d => d.id === div.id);
-    if (idx >= 0) divs[idx] = div; else divs.push(div);
+    if (idx >= 0) divs[idx] = div;
+    else divs.push(div);
     setStorage(DB_KEY_DIVISIONS, divs);
     return true;
 };
+
 export const deleteDivision = async (id: string): Promise<boolean> => {
     let divs = getStorage<DivisionConfig[]>(DB_KEY_DIVISIONS, []);
     divs = divs.filter(d => d.id !== id);
     setStorage(DB_KEY_DIVISIONS, divs);
     return true;
 };
+
 export const loginSystem = async (id: string, pass: string): Promise<UserProfile> => {
     await delay(500);
     const users = getStorage<UserProfile[]>(DB_KEY_USERS, []);
-    const user = users.find(u => (u.id === id || u.name === id) && u.pin_code === pass);
+    const user = users.find(u => (u.id === id || u.name === id) && u.pin_code === pass); // Flexible login
     if (!user) throw new Error("User atau PIN salah");
     return user;
 };
+
 export const verifyDivisionCredential = async (id: string, pass: string): Promise<DivisionConfig | null> => {
     await delay(500);
     const divs = getStorage<DivisionConfig[]>(DB_KEY_DIVISIONS, []);
     const div = divs.find(d => d.id === id && d.password === pass);
     return div || null;
 };
-export const getActivityLogs = async (): Promise<ActivityLog[]> => { return getStorage<ActivityLog[]>(DB_KEY_LOGS, []); };
 
-export interface DevConfig { enableGpsBypass: boolean; enableMockOCR: boolean; }
-export const getDevConfig = (): DevConfig => getStorage<DevConfig>(DB_KEY_CONFIG, { enableGpsBypass: false, enableMockOCR: false });
-export const saveDevConfig = (cfg: DevConfig) => setStorage(DB_KEY_CONFIG, cfg);
-export const wipeDatabase = async () => { localStorage.clear(); seedLocalData(); };
+export const getActivityLogs = async (): Promise<ActivityLog[]> => {
+    return getStorage<ActivityLog[]>(DB_KEY_LOGS, []);
+};
+
+// --- SYSTEM UTILS ---
+
+export interface DevConfig {
+    enableGpsBypass: boolean;
+    enableMockOCR: boolean;
+}
+
+export const getDevConfig = (): DevConfig => {
+    return getStorage<DevConfig>(DB_KEY_CONFIG, { enableGpsBypass: false, enableMockOCR: false });
+};
+
+export const saveDevConfig = (cfg: DevConfig) => {
+    setStorage(DB_KEY_CONFIG, cfg);
+};
+
+export const wipeDatabase = async () => {
+    localStorage.clear();
+    seedLocalData(); // Reseed basic data
+};
+
 export const seedDummyData = async (force?: boolean) => {
     const drivers = getStorage<DriverData[]>(DB_KEY_DRIVERS, []);
+
+    // Create Dummy Drivers
     const dummy: DriverData = {
         id: `DUMMY-${Date.now()}`,
         name: "Budi Santoso (Dummy)",
@@ -409,11 +417,25 @@ export const seedDummyData = async (force?: boolean) => {
         priority: Priority.NORMAL,
         gate: Gate.NONE
     };
+
     drivers.push(dummy);
     setStorage(DB_KEY_DRIVERS, drivers);
 };
-export const checkDatabaseConnection = async (): Promise<boolean> => true;
-export const exportDatabase = (): string => JSON.stringify({ drivers: getStorage(DB_KEY_DRIVERS, []), users: getStorage(DB_KEY_USERS, []), gates: getStorage(DB_KEY_GATES, []), config: getStorage(DB_KEY_CONFIG, {}) }, null, 2);
+
+export const checkDatabaseConnection = async (): Promise<boolean> => {
+    return true; // LocalStorage selalu connected
+};
+
+export const exportDatabase = (): string => {
+    const dump = {
+        drivers: getStorage(DB_KEY_DRIVERS, []),
+        users: getStorage(DB_KEY_USERS, []),
+        gates: getStorage(DB_KEY_GATES, []),
+        config: getStorage(DB_KEY_CONFIG, {})
+    };
+    return JSON.stringify(dump, null, 2);
+};
+
 export const importDatabase = (json: string): boolean => {
     try {
         const data = JSON.parse(json);
@@ -422,10 +444,14 @@ export const importDatabase = (json: string): boolean => {
         if (data.gates) setStorage(DB_KEY_GATES, data.gates);
         if (data.config) setStorage(DB_KEY_CONFIG, data.config);
         return true;
-    } catch (e) { return false; }
+    } catch (e) {
+        console.error("Import failed", e);
+        return false;
+    }
 };
 
-export const fetchWAGroups = async () => [];
+// --- LEGACY EXPORTS COMPATIBILITY ---
+export const fetchWAGroups = async () => { return []; };
 export const sendPersonalNotification = async (target: string, msg: string) => sendWANotification(target, msg);
 export const sendGroupNotification = async (msg: string) => sendWANotification('GROUP', msg);
 export const sendDailyReportToGroup = async () => true;
