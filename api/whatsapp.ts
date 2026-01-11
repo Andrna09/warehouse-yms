@@ -1,71 +1,84 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
+import https from 'https'; // Kita pakai library bawaan paling dasar
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  // 1. Pastikan Metode Pengiriman Benar (Harus POST)
-  // Mencegah akses iseng lewat browser biasa (GET)
+  // 1. Cek Method
   if (req.method !== 'POST') {
-    return res.status(405).json({ error: 'Method not allowed (Gunakan POST)' });
+    return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  const { target, message } = req.body;
-
-  // 2. AMBIL TOKEN DARI VERCEL SETTINGS
-  // Pastikan di Dashboard Vercel > Settings > Env Variables namanya PERSIS "FONNTE_TOKEN"
+  // 2. Ambil Token
   const token = process.env.FONNTE_TOKEN;
-
-  // Cek Kritis: Apakah token ada?
   if (!token) {
-    console.error("FATAL ERROR: FONNTE_TOKEN hilang dari Environment Variables Vercel.");
-    console.error("Solusi: Buka Vercel > Settings > Environment Variables > Tambahkan FONNTE_TOKEN");
-    
     return res.status(500).json({ 
-      error: 'Server Misconfiguration: Token WA belum disetting.',
-      action: 'Check Vercel Logs'
+      error: 'Server Misconfiguration: FONNTE_TOKEN missing',
+      action: 'Check Vercel Environment Variables'
     });
   }
 
-  try {
-    // 3. KIRIM PERMINTAAN KE API FONNTE
-    const response = await fetch('https://api.fonnte.com/send', {
-      method: 'POST',
-      headers: {
-        'Authorization': token,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        target: target,
-        message: message,
-        countryCode: '62', // Fitur Bagus: Otomatis ubah 08xx jadi 628xx
-      }),
-    });
-
-    const data = await response.json();
-
-    // 4. VALIDASI RESPON FONNTE (BAGIAN PENTING!)
-    // Fonnte kadang merespon status 200 meskipun gagal kirim (misal: kuota habis / nomor salah).
-    // Kita harus cek body response-nya.
-    
-    if (!data.status) {
-        // Jika status = false, berarti GAGAL.
-        console.error("Fonnte API Menolak:", data);
-        
-        // Kita kembalikan error 500 agar Frontend tahu ini gagal
-        return res.status(500).json({ 
-            error: 'Gagal mengirim WA (Ditolak Provider)',
-            reason: data.reason || 'Token salah, kuota habis, atau nomor tidak valid',
-            debug: data
-        });
-    }
-
-    // Jika sampai sini, berarti SUKSES
-    return res.status(200).json(data);
-
-  } catch (error: any) {
-    // Error Jaringan / Server Crash
-    console.error('WhatsApp Handler Crash:', error);
-    return res.status(500).json({ 
-        error: 'Internal Server Error saat menghubungi WhatsApp',
-        details: error.message 
-    });
+  // 3. Ambil Data Body
+  const { target, message } = req.body || {};
+  if (!target || !message) {
+    return res.status(400).json({ error: 'Target dan Message wajib diisi' });
   }
+
+  // 4. Siapkan Data Kiriman
+  const postData = JSON.stringify({
+    target: target,
+    message: message,
+    countryCode: '62',
+  });
+
+  const options = {
+    hostname: 'api.fonnte.com',
+    path: '/send',
+    method: 'POST',
+    headers: {
+      'Authorization': token,
+      'Content-Type': 'application/json',
+      'Content-Length': Buffer.byteLength(postData),
+    },
+  };
+
+  // 5. EKSEKUSI MANUAL (PENGGANTI FETCH)
+  // Kode ini jalan di Node.js versi KUNO sekalipun
+  return new Promise((resolve) => {
+    const apiReq = https.request(options, (apiRes) => {
+      let data = '';
+
+      // Terima data potong demi potong
+      apiRes.on('data', (chunk) => {
+        data += chunk;
+      });
+
+      // Saat selesai terima data
+      apiRes.on('end', () => {
+        try {
+          const jsonResponse = JSON.parse(data);
+          
+          if (!jsonResponse.status) {
+             res.status(500).json({ error: 'Fonnte Rejected', detail: jsonResponse });
+          } else {
+             res.status(200).json(jsonResponse);
+          }
+          resolve();
+
+        } catch (e) {
+          res.status(500).json({ error: 'Invalid JSON from Fonnte', raw: data });
+          resolve();
+        }
+      });
+    });
+
+    // Handle Error Koneksi
+    apiReq.on('error', (e) => {
+      console.error("Connection Error:", e);
+      res.status(500).json({ error: 'Gagal koneksi ke Fonnte', details: e.message });
+      resolve();
+    });
+
+    // Tulis data dan kirim
+    apiReq.write(postData);
+    apiReq.end();
+  });
 }
