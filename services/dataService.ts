@@ -37,9 +37,6 @@ export const logActivity = async (action: string, details: string, user: string 
 const sendWhatsApp = async (target: string, message: string) => {
   if (!target || target.length < 5) return;
 
-  // REVISI: Menghapus pengecekan DEV MODE agar di production tetap memaksa kirim
-  // Jika ingin debugging di local, lihat console browser / network tab.
-
   try {
     const response = await fetch('/api/whatsapp', {
       method: 'POST',
@@ -301,7 +298,7 @@ export const updateDriverStatus = async (id: string, status: QueueStatus) => {
     logActivity('UPDATE_STATUS', `Status changed to ${status}`, 'Admin');
 };
 
-// --- SISA HELPER FUNCTION (TIDAK BERUBAH) ---
+// --- SISA HELPER FUNCTION ---
 export const getDivisions = async (): Promise<DivisionConfig[]> => apiRequest('divisions', 'GET');
 export const saveDivision = async (div: Partial<DivisionConfig>): Promise<boolean> => {
     const divisions = await getDivisions();
@@ -364,3 +361,13 @@ export const seedDummyData = async () => {
 };
 export const exportDatabase = () => { return JSON.stringify({ message: "Please contact IT for DB Dump" }); };
 export const importDatabase = (jsonString: string) => { console.warn("Import not supported in Cloud Mode"); return false; };
+
+// --- DEVELOPER CONFIG (INI YANG KEMARIN HILANG) ---
+export const getDevConfig = () => {
+    try {
+      const saved = localStorage.getItem('yms_dev_settings');
+      return saved ? JSON.parse(saved) : {};
+    } catch (e) {
+      return {};
+    }
+};
