@@ -209,9 +209,9 @@ export const LoginPage: React.FC<Props> = ({ onLoginSuccess, onBack }) => {
         {step === 1 && (
             <div className="mt-8 flex justify-center gap-2 flex-wrap animate-fade-in-up" style={{animationDelay: '0.2s'}}>
                 {[
-                    { id: 'SECURITY', pass: 'Sec@123', label: 'Field Ops' },
-                    { id: 'ADMIN', pass: 'Adm@123', label: 'Traffic' },
-                    { id: 'MANAGER', pass: 'Man@123', label: 'System' }
+                    { id: 'SECURITY', pass: '1234', label: 'Field Ops' },
+                    { id: 'ADMIN', pass: '1234', label: 'Traffic' },
+                    { id: 'MANAGER', pass: '1234', label: 'System' }
                 ].map(item => (
                     <button 
                         key={item.id}
