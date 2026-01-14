@@ -21,17 +21,17 @@ const seedLocalData = () => {
     }
     if (!localStorage.getItem(DB_KEY_USERS)) {
         const defaultUsers: UserProfile[] = [
-            { id: 'security', name: 'Pak Satpam', role: 'SECURITY', pin_code: '1234', status: 'ACTIVE' },
-            { id: 'admin', name: 'Admin Ops', role: 'ADMIN', pin_code: '1234', status: 'ACTIVE' },
-            { id: 'manager', name: 'Manager Logistik', role: 'MANAGER', pin_code: '1234', status: 'ACTIVE' }
+            { id: 'SECURITY', name: 'Pak Satpam', role: 'SECURITY', pin_code: '1234', status: 'ACTIVE' },
+            { id: 'ADMIN', name: 'Admin Ops', role: 'ADMIN', pin_code: '1234', status: 'ACTIVE' },
+            { id: 'MANAGER', name: 'Manager Logistik', role: 'MANAGER', pin_code: '1234', status: 'ACTIVE' }
         ];
         localStorage.setItem(DB_KEY_USERS, JSON.stringify(defaultUsers));
     }
     if (!localStorage.getItem(DB_KEY_DIVISIONS)) {
         const defaultDivs: DivisionConfig[] = [
-            { id: 'SECURITY', name: 'Pos Security', password: '123', role: 'SECURITY', theme: 'emerald' },
-            { id: 'ADMIN', name: 'Traffic Control', password: '123', role: 'ADMIN', theme: 'blue' },
-            { id: 'MANAGER', name: 'System Admin', password: '123', role: 'MANAGER', theme: 'purple' }
+            { id: 'SECURITY', name: 'Pos Security', password: '1234', role: 'SECURITY', theme: 'emerald' },
+            { id: 'ADMIN', name: 'Traffic Control', password: '1234', role: 'ADMIN', theme: 'blue' },
+            { id: 'MANAGER', name: 'System Admin', password: '1234', role: 'MANAGER', theme: 'purple' }
         ];
         localStorage.setItem(DB_KEY_DIVISIONS, JSON.stringify(defaultDivs));
     }
